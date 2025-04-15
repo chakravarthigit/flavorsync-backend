@@ -7,6 +7,20 @@ const path = require('path');
 const fs = require('fs');
 const User = require('./models/User');
 
+// Detect if we're running on Render
+const isRunningOnRender = process.env.RENDER || 
+                          process.env.IS_RENDER || 
+                          process.env.RENDER_EXTERNAL_URL || 
+                          process.env.RENDER_SERVICE_ID;
+
+if (isRunningOnRender) {
+  console.log('Running on Render deployment environment');
+  process.env.IS_RENDER = 'true';
+  process.env.NODE_ENV = process.env.NODE_ENV || 'production';
+} else {
+  console.log('Running in local development environment');
+}
+
 // Initialize Express app
 const app = express();
 
@@ -18,21 +32,22 @@ app.use(cors({
     
     // List of allowed origins
     const allowedOrigins = [
+      // Render deployment URLs
+      'https://flavorsync-backend.onrender.com',
+      'https://flavorsync.onrender.com',
+      // Common React Native development URLs
       'http://localhost:3000',
       'http://localhost:19006',
-      'http://192.168.55.102:19006',
-      'https://flavorsync.netlify.app',
+      'http://localhost:5000',
+      'http://localhost:8081',
+      // Android emulator URLs
+      'http://10.0.2.2:5000',
+      'http://10.0.2.2:19006',
+      'http://10.0.2.2:8081',
+      // Expo URLs
+      'exp://localhost:19000',
       'exp://192.168.55.102:19000',
-      'http://192.168.55.101:19006',
-      'http://192.168.55.102:3000',
-      'https://flavorsync.onrender.com',
-      'http://10.0.2.2:5000', // Android emulator localhost
-      'http://localhost:5000', // Add local development
-      'http://10.0.2.2:19006', // Add Expo development server
-      'http://10.0.2.2:8081', // Add React Native development server
-      'http://192.168.1.100:5000', // Add local network IP
-      'http://192.168.1.100:19006',
-      'http://192.168.1.100:8081'
+      // Network IPs - will use callback to allow all during development
     ];
     
     if(allowedOrigins.indexOf(origin) === -1){

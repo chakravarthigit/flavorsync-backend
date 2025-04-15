@@ -77,13 +77,22 @@ router.post('/upload-image', upload.single('image'), async (req, res) => {
       return res.status(400).json({ error: 'User ID is required' });
     }
 
-    // Get server IP and port for absolute URL
-    const serverIp = getNetworkAddress();
-    const PORT = process.env.PORT || 5000;
+    // Instead of using local IP, use the Render deployment URL
+    // Also check if we're in production or development environment
+    let imageUrl;
+    const isProduction = process.env.NODE_ENV === 'production' || process.env.IS_RENDER === 'true';
     
-    // Create an absolute URL with the server's IP
-    const imageUrl = `http://${serverIp}:${PORT}/uploads/${req.file.filename}`;
-    console.log('Generated image URL:', imageUrl);
+    if (isProduction) {
+      // Use the Render domain in production
+      imageUrl = `https://flavorsync-backend.onrender.com/uploads/${req.file.filename}`;
+      console.log('Using production URL for image:', imageUrl);
+    } else {
+      // Use local development IP in development
+      const serverIp = getNetworkAddress();
+      const PORT = process.env.PORT || 5000;
+      imageUrl = `http://${serverIp}:${PORT}/uploads/${req.file.filename}`;
+      console.log('Using development URL for image:', imageUrl);
+    }
 
     // Double-check that the file exists
     const filePath = path.join(__dirname, '../uploads', req.file.filename);
@@ -124,6 +133,23 @@ router.post('/update-profile', async (req, res) => {
       return res.status(400).json({ error: 'User ID is required' });
     }
 
+    // Fix profile image URL if it contains an IP address
+    let updatedProfileImage = profileImage;
+    if (profileImage && (
+      profileImage.includes('10.214.96.37') || 
+      profileImage.includes('192.168.') || 
+      profileImage.includes('localhost') || 
+      profileImage.includes('127.0.0.1')
+    )) {
+      // Extract the filename from the URL
+      const urlParts = profileImage.split('/');
+      const filename = urlParts[urlParts.length - 1];
+      
+      // Replace with Render URL
+      updatedProfileImage = `https://flavorsync-backend.onrender.com/uploads/${filename}`;
+      console.log('Fixed profile image URL:', updatedProfileImage);
+    }
+
     // Update user profile
     const updatedUser = await User.findByIdAndUpdate(
       _id,
@@ -133,7 +159,7 @@ router.post('/update-profile', async (req, res) => {
         email,
         phoneNumber,
         bio,
-        profileImage,
+        profileImage: updatedProfileImage,
         lastUpdated: new Date()
       },
       { new: true }
