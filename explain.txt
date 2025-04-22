@@ -1,0 +1,825 @@
+# FlavorSync Backend Documentation
+
+## 1. Backend Overview
+The FlavorSync backend is a Node.js/Express server with MongoDB as the database. It provides a RESTful API for the React Native frontend to interact with. The backend handles:
+- User authentication and authorization
+- Recipe management
+- Meal planning
+- Shopping list management
+- Image storage and retrieval
+- User profile management
+
+## 2. Backend Structure
+```
+backend/
+├── src/
+│   ├── controllers/    # Request handlers for API endpoints
+│   │   ├── authController.js
+│   │   ├── recipeController.js
+│   │   ├── userController.js
+│   │   ├── mealPlanController.js
+│   │   ├── shoppingListController.js
+│   ├── models/         # Database models (Mongoose schemas)
+│   │   ├── User.js
+│   │   ├── Recipe.js
+│   │   ├── MealPlan.js
+│   │   ├── ShoppingList.js
+│   │   ├── Ingredient.js
+│   ├── routes/         # API route definitions
+│   │   ├── authRoutes.js
+│   │   ├── recipeRoutes.js
+│   │   ├── userRoutes.js
+│   │   ├── mealPlanRoutes.js
+│   │   ├── shoppingListRoutes.js
+│   ├── middleware/     # Custom middleware
+│   │   ├── authMiddleware.js
+│   │   ├── errorMiddleware.js
+│   │   ├── uploadMiddleware.js
+│   ├── services/       # Business logic and external services
+│   │   ├── emailService.js
+│   │   ├── imageService.js
+│   ├── utils/          # Utility functions
+│   │   ├── generateToken.js
+│   │   ├── validators.js
+│   ├── config/         # Configuration files
+│   │   ├── db.js
+│   │   ├── server.js
+├── app.js              # Express application setup
+├── server.js           # Server entry point
+├── package.json        # Dependencies and scripts
+├── .env                # Environment variables (not in git)
+├── .gitignore          # Git ignore file
+├── README.md           # Project documentation
+```
+
+## 3. Key Backend Components
+
+### 3.1 API Routes
+The backend exposes the following API endpoints:
+
+1. **Authentication Routes** (`/api/auth`)
+   - POST `/api/auth/register` - Register a new user
+   - POST `/api/auth/login` - Authenticate user and return JWT
+   - POST `/api/auth/refresh-token` - Refresh authentication token
+   - POST `/api/auth/forgot-password` - Request password reset
+   - POST `/api/auth/reset-password` - Reset password with token
+
+2. **Recipe Routes** (`/api/recipes`)
+   - GET `/api/recipes` - Get all recipes (with pagination and filters)
+   - POST `/api/recipes` - Create a new recipe (authenticated)
+   - GET `/api/recipes/:id` - Get a specific recipe
+   - PUT `/api/recipes/:id` - Update a recipe (authenticated)
+   - DELETE `/api/recipes/:id` - Delete a recipe (authenticated)
+   - POST `/api/recipes/:id/rate` - Rate a recipe (authenticated)
+   - GET `/api/recipes/search` - Search recipes by keyword
+
+3. **User Routes** (`/api/users`)
+   - GET `/api/users/profile` - Get current user profile (authenticated)
+   - PUT `/api/users/profile` - Update user profile (authenticated)
+   - GET `/api/users/:id/recipes` - Get recipes created by a user
+   - GET `/api/users/:id/favorites` - Get user's favorite recipes
+   - POST `/api/users/favorites/:recipeId` - Add recipe to favorites (authenticated)
+   - DELETE `/api/users/favorites/:recipeId` - Remove recipe from favorites (authenticated)
+
+4. **Meal Plan Routes** (`/api/mealplans`)
+   - GET `/api/mealplans` - Get user's meal plans (authenticated)
+   - POST `/api/mealplans` - Create a new meal plan (authenticated)
+   - GET `/api/mealplans/:id` - Get specific meal plan (authenticated)
+   - PUT `/api/mealplans/:id` - Update a meal plan (authenticated)
+   - DELETE `/api/mealplans/:id` - Delete a meal plan (authenticated)
+   - POST `/api/mealplans/:id/recipes` - Add recipe to meal plan (authenticated)
+   - DELETE `/api/mealplans/:id/recipes/:recipeId` - Remove recipe from meal plan (authenticated)
+
+5. **Shopping List Routes** (`/api/shopping-lists`)
+   - GET `/api/shopping-lists` - Get user's shopping list (authenticated)
+   - PUT `/api/shopping-lists` - Update shopping list (authenticated)
+   - POST `/api/shopping-lists/items` - Add item to shopping list (authenticated)
+   - DELETE `/api/shopping-lists/items/:itemId` - Remove item from shopping list (authenticated)
+   - PUT `/api/shopping-lists/items/:itemId` - Update item in shopping list (authenticated)
+
+### 3.2 Database Models
+1. **User Model** (`models/User.js`)
+```javascript
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+
+const userSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: [true, 'Please add a name'],
+    trim: true
+  },
+  email: {
+    type: String,
+    required: [true, 'Please add an email'],
+    unique: true,
+    lowercase: true,
+    match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please add a valid email']
+  },
+  password: {
+    type: String,
+    required: [true, 'Please add a password'],
+    minlength: [6, 'Password must be at least 6 characters'],
+    select: false
+  },
+  profileImage: {
+    type: String,
+    default: 'default-profile.jpg'
+  },
+  bio: {
+    type: String,
+    maxlength: [500, 'Bio cannot be more than 500 characters']
+  },
+  favoriteRecipes: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Recipe'
+  }],
+  role: {
+    type: String,
+    enum: ['user', 'admin'],
+    default: 'user'
+  },
+  resetPasswordToken: String,
+  resetPasswordExpire: Date
+}, {
+  timestamps: true
+});
+
+// Encrypt password using bcrypt
+userSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) {
+    next();
+  }
+  
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
+  next();
+});
+
+// Match user entered password to hashed password in database
+userSchema.methods.matchPassword = async function(enteredPassword) {
+  return await bcrypt.compare(enteredPassword, this.password);
+};
+
+module.exports = mongoose.model('User', userSchema);
+```
+
+2. **Recipe Model** (`models/Recipe.js`)
+```javascript
+const mongoose = require('mongoose');
+
+const recipeSchema = new mongoose.Schema({
+  title: {
+    type: String,
+    required: [true, 'Please add a title'],
+    trim: true,
+    maxlength: [100, 'Title cannot be more than 100 characters']
+  },
+  description: {
+    type: String,
+    required: [true, 'Please add a description']
+  },
+  ingredients: [{
+    name: { type: String, required: true },
+    amount: { type: String, required: true },
+    unit: { type: String }
+  }],
+  instructions: [{
+    step: { type: Number, required: true },
+    text: { type: String, required: true }
+  }],
+  cookingTime: {
+    type: Number,
+    required: [true, 'Please add cooking time']
+  },
+  servings: {
+    type: Number,
+    required: [true, 'Please add number of servings']
+  },
+  difficulty: {
+    type: String,
+    enum: ['Easy', 'Medium', 'Hard'],
+    default: 'Medium'
+  },
+  categories: [String],
+  image: String,
+  author: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  ratings: [{
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    value: {
+      type: Number,
+      min: 1,
+      max: 5
+    }
+  }],
+  averageRating: {
+    type: Number,
+    default: 0
+  }
+}, {
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
+});
+
+// Calculate average rating
+recipeSchema.pre('save', function(next) {
+  if (this.ratings.length > 0) {
+    this.averageRating = this.ratings.reduce((sum, rating) => sum + rating.value, 0) / this.ratings.length;
+  }
+  next();
+});
+
+// Index for text search
+recipeSchema.index({ title: 'text', description: 'text' });
+
+module.exports = mongoose.model('Recipe', recipeSchema);
+```
+
+3. **MealPlan Model** (`models/MealPlan.js`)
+```javascript
+const mongoose = require('mongoose');
+
+const mealPlanSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: [true, 'Please add a name'],
+    trim: true
+  },
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  startDate: {
+    type: Date,
+    required: [true, 'Please add a start date']
+  },
+  endDate: {
+    type: Date,
+    required: [true, 'Please add an end date']
+  },
+  meals: [{
+    day: {
+      type: Date,
+      required: true
+    },
+    mealType: {
+      type: String,
+      enum: ['Breakfast', 'Lunch', 'Dinner', 'Snack'],
+      required: true
+    },
+    recipe: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Recipe',
+      required: true
+    }
+  }],
+  notes: String
+}, {
+  timestamps: true
+});
+
+module.exports = mongoose.model('MealPlan', mealPlanSchema);
+```
+
+4. **ShoppingList Model** (`models/ShoppingList.js`)
+```javascript
+const mongoose = require('mongoose');
+
+const shoppingListSchema = new mongoose.Schema({
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    unique: true
+  },
+  items: [{
+    name: {
+      type: String,
+      required: true
+    },
+    quantity: {
+      type: String,
+      required: true
+    },
+    unit: String,
+    category: {
+      type: String,
+      default: 'Other'
+    },
+    checked: {
+      type: Boolean,
+      default: false
+    },
+    recipe: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Recipe'
+    }
+  }]
+}, {
+  timestamps: true
+});
+
+module.exports = mongoose.model('ShoppingList', shoppingListSchema);
+```
+
+### 3.3 Controllers
+1. **Auth Controller** (`controllers/authController.js`)
+```javascript
+const User = require('../models/User');
+const generateToken = require('../utils/generateToken');
+const asyncHandler = require('express-async-handler');
+const crypto = require('crypto');
+const emailService = require('../services/emailService');
+
+// @desc    Register a new user
+// @route   POST /api/auth/register
+// @access  Public
+const registerUser = asyncHandler(async (req, res) => {
+  const { name, email, password } = req.body;
+
+  // Check if user exists
+  const userExists = await User.findOne({ email });
+  if (userExists) {
+    res.status(400);
+    throw new Error('User already exists');
+  }
+
+  // Create user
+  const user = await User.create({
+    name,
+    email,
+    password
+  });
+
+  if (user) {
+    // Create a shopping list for the user
+    await ShoppingList.create({ user: user._id, items: [] });
+    
+    res.status(201).json({
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      profileImage: user.profileImage,
+      token: generateToken(user._id)
+    });
+  } else {
+    res.status(400);
+    throw new Error('Invalid user data');
+  }
+});
+
+// @desc    Auth user & get token
+// @route   POST /api/auth/login
+// @access  Public
+const loginUser = asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
+
+  // Find user by email
+  const user = await User.findOne({ email }).select('+password');
+  if (!user) {
+    res.status(401);
+    throw new Error('Invalid email or password');
+  }
+
+  // Check if password matches
+  const isMatch = await user.matchPassword(password);
+  if (!isMatch) {
+    res.status(401);
+    throw new Error('Invalid email or password');
+  }
+
+  res.json({
+    _id: user._id,
+    name: user.name,
+    email: user.email,
+    profileImage: user.profileImage,
+    token: generateToken(user._id)
+  });
+});
+
+// More auth controller methods...
+
+module.exports = {
+  registerUser,
+  loginUser,
+  // Export other methods...
+};
+```
+
+2. **Recipe Controller** (`controllers/recipeController.js`)
+```javascript
+const Recipe = require('../models/Recipe');
+const asyncHandler = require('express-async-handler');
+const imageService = require('../services/imageService');
+
+// @desc    Get all recipes
+// @route   GET /api/recipes
+// @access  Public
+const getRecipes = asyncHandler(async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const skip = (page - 1) * limit;
+  
+  const keyword = req.query.keyword
+    ? { $text: { $search: req.query.keyword } }
+    : {};
+    
+  const difficulty = req.query.difficulty 
+    ? { difficulty: req.query.difficulty }
+    : {};
+    
+  const category = req.query.category
+    ? { categories: req.query.category }
+    : {};
+
+  const recipes = await Recipe.find({ ...keyword, ...difficulty, ...category })
+    .populate('author', 'name profileImage')
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit);
+    
+  const count = await Recipe.countDocuments({ ...keyword, ...difficulty, ...category });
+
+  res.json({
+    recipes,
+    page,
+    pages: Math.ceil(count / limit),
+    total: count
+  });
+});
+
+// @desc    Create a recipe
+// @route   POST /api/recipes
+// @access  Private
+const createRecipe = asyncHandler(async (req, res) => {
+  const { title, description, ingredients, instructions, cookingTime, servings, difficulty, categories } = req.body;
+
+  // Handle image upload if provided
+  let image;
+  if (req.file) {
+    image = await imageService.uploadImage(req.file);
+  }
+
+  const recipe = await Recipe.create({
+    title,
+    description,
+    ingredients,
+    instructions,
+    cookingTime,
+    servings,
+    difficulty,
+    categories,
+    image,
+    author: req.user._id
+  });
+
+  res.status(201).json(recipe);
+});
+
+// More recipe controller methods...
+
+module.exports = {
+  getRecipes,
+  createRecipe,
+  // Export other methods...
+};
+```
+
+## 4. Setup & Installation
+
+### 4.1 Prerequisites
+- Node.js (v14 or later)
+- MongoDB (local installation or cloud-based MongoDB Atlas)
+- npm or yarn package manager
+
+### 4.2 Environment Setup
+1. Clone the repository:
+   ```
+   git clone https://github.com/yourusername/flavorsync.git
+   cd flavorsync/backend
+   ```
+
+2. Install dependencies:
+   ```
+   npm install
+   ```
+
+3. Create a `.env` file in the backend root directory with the following variables:
+   ```
+   NODE_ENV=development
+   PORT=5000
+   MONGO_URI=mongodb://localhost:27017/flavorsync
+   JWT_SECRET=your_jwt_secret_key
+   JWT_EXPIRE=30d
+   EMAIL_SERVICE=gmail
+   EMAIL_USERNAME=your_email@gmail.com
+   EMAIL_PASSWORD=your_email_password
+   EMAIL_FROM=noreply@flavorsync.com
+   ```
+
+### 4.3 Database Setup
+1. If using a local MongoDB installation, start MongoDB:
+   ```
+   mongod --dbpath /path/to/data/directory
+   ```
+
+2. If using MongoDB Atlas:
+   - Create a cluster in MongoDB Atlas
+   - Create a database user
+   - Get your connection string and add it to the MONGO_URI variable in your .env file
+
+## 5. Running the Backend
+
+### 5.1 Development Mode
+Start the server in development mode with hot reloading:
+```
+npm run dev
+```
+
+The server will run on http://localhost:5000 (or the port specified in your .env file).
+
+### 5.2 Production Mode
+For production deployment:
+```
+npm start
+```
+
+## 6. API Documentation
+
+### 6.1 Authentication API
+
+#### Register User
+- **URL**: `/api/auth/register`
+- **Method**: `POST`
+- **Body**:
+  ```json
+  {
+    "name": "John Doe",
+    "email": "john@example.com",
+    "password": "password123"
+  }
+  ```
+- **Success Response**: `201 Created`
+  ```json
+  {
+    "_id": "60d21b4667d0d8992e610c85",
+    "name": "John Doe",
+    "email": "john@example.com",
+    "profileImage": "default-profile.jpg",
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }
+  ```
+
+#### Login User
+- **URL**: `/api/auth/login`
+- **Method**: `POST`
+- **Body**:
+  ```json
+  {
+    "email": "john@example.com",
+    "password": "password123"
+  }
+  ```
+- **Success Response**: `200 OK`
+  ```json
+  {
+    "_id": "60d21b4667d0d8992e610c85",
+    "name": "John Doe",
+    "email": "john@example.com",
+    "profileImage": "default-profile.jpg",
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }
+  ```
+
+### 6.2 Recipe API
+
+#### Get Recipes
+- **URL**: `/api/recipes?page=1&limit=10&keyword=pasta&difficulty=Easy&category=Italian`
+- **Method**: `GET`
+- **Query Parameters**:
+  - `page`: Page number (default: 1)
+  - `limit`: Number of recipes per page (default: 10)
+  - `keyword`: Search keyword
+  - `difficulty`: Filter by difficulty (Easy, Medium, Hard)
+  - `category`: Filter by category
+- **Success Response**: `200 OK`
+  ```json
+  {
+    "recipes": [
+      {
+        "_id": "60d21b4667d0d8992e610c85",
+        "title": "Spaghetti Carbonara",
+        "description": "Classic Italian pasta dish",
+        "ingredients": [
+          {
+            "name": "Spaghetti",
+            "amount": "500",
+            "unit": "g"
+          },
+          {
+            "name": "Bacon",
+            "amount": "200",
+            "unit": "g"
+          }
+        ],
+        "instructions": [
+          {
+            "step": 1,
+            "text": "Cook pasta according to package instructions"
+          },
+          {
+            "step": 2,
+            "text": "Fry bacon until crispy"
+          }
+        ],
+        "cookingTime": 30,
+        "servings": 4,
+        "difficulty": "Easy",
+        "categories": ["Italian", "Pasta"],
+        "image": "spaghetti-carbonara.jpg",
+        "author": {
+          "_id": "60d21b4667d0d8992e610c85",
+          "name": "John Doe",
+          "profileImage": "default-profile.jpg"
+        },
+        "averageRating": 4.5,
+        "createdAt": "2023-04-15T10:30:00.000Z",
+        "updatedAt": "2023-04-15T10:30:00.000Z"
+      }
+    ],
+    "page": 1,
+    "pages": 5,
+    "total": 45
+  }
+  ```
+
+#### Create Recipe
+- **URL**: `/api/recipes`
+- **Method**: `POST`
+- **Auth Required**: Yes (Bearer Token)
+- **Content-Type**: `multipart/form-data`
+- **Body**:
+  ```
+  title: Spaghetti Carbonara
+  description: Classic Italian pasta dish
+  ingredients: [{"name":"Spaghetti","amount":"500","unit":"g"},{"name":"Bacon","amount":"200","unit":"g"}]
+  instructions: [{"step":1,"text":"Cook pasta according to package instructions"},{"step":2,"text":"Fry bacon until crispy"}]
+  cookingTime: 30
+  servings: 4
+  difficulty: Easy
+  categories: ["Italian", "Pasta"]
+  image: [FILE]
+  ```
+- **Success Response**: `201 Created`
+
+### 6.3 Error Handling
+The API returns standard HTTP status codes along with error messages in the following format:
+```json
+{
+  "message": "Error message here",
+  "stack": "Error stack trace (in development mode only)"
+}
+```
+
+Common error codes:
+- `400 Bad Request`: Invalid input data
+- `401 Unauthorized`: No authentication token provided
+- `403 Forbidden`: Not authorized to access the resource
+- `404 Not Found`: Resource not found
+- `500 Internal Server Error`: Server error
+
+## 7. Security Considerations
+
+### 7.1 Authentication
+- JWT (JSON Web Tokens) for stateless authentication
+- Password hashing using bcrypt
+- Token expiration and refresh tokens
+- HTTPS for all API endpoints in production
+
+### 7.2 Authorization
+- Role-based access control (user, admin)
+- Resource ownership validation (users can only modify their own content)
+- Input validation for all API endpoints
+
+### 7.3 Data Protection
+- Environment variables for sensitive information
+- Sanitization of user inputs
+- MongoDB validation for database schemas
+- Rate limiting to prevent abuse
+
+## 8. Testing
+
+### 8.1 Unit Testing
+```
+npm test
+```
+
+Unit tests for controllers, models, and utilities are written using Jest.
+
+### 8.2 Integration Testing
+```
+npm run test:integration
+```
+
+Integration tests verify the interaction between different components of the API.
+
+### 8.3 API Testing
+```
+npm run test:api
+```
+
+API tests use Supertest to test the API endpoints.
+
+## 9. Deployment
+
+### 9.1 Heroku Deployment
+1. Create a Heroku account and install the Heroku CLI
+2. Login to Heroku CLI:
+   ```
+   heroku login
+   ```
+3. Create a new Heroku app:
+   ```
+   heroku create flavorsync-api
+   ```
+4. Add MongoDB Atlas connection string to Heroku environment:
+   ```
+   heroku config:set MONGO_URI=mongodb+srv://...
+   ```
+5. Add other environment variables:
+   ```
+   heroku config:set NODE_ENV=production
+   heroku config:set JWT_SECRET=your_secret
+   heroku config:set JWT_EXPIRE=30d
+   ```
+6. Deploy to Heroku:
+   ```
+   git push heroku main
+   ```
+
+### 9.2 Docker Deployment
+A Dockerfile is included for containerized deployment:
+```
+FROM node:14-alpine
+
+WORKDIR /usr/src/app
+
+COPY package*.json ./
+RUN npm install
+
+COPY . .
+
+EXPOSE 5000
+
+CMD ["node", "server.js"]
+```
+
+To build and run the Docker container:
+```
+docker build -t flavorsync-api .
+docker run -p 5000:5000 -d --env-file .env flavorsync-api
+```
+
+## 10. Performance Optimization
+
+### 10.1 Database Optimizations
+- Indexes for commonly queried fields
+- Pagination for list endpoints
+- Projection to limit returned fields
+- Proper MongoDB connection pooling
+
+### 10.2 API Optimizations
+- Response compression
+- Caching frequently accessed data
+- Rate limiting for API endpoints
+- Asynchronous processing for image uploads
+
+## 11. Monitoring and Logging
+
+### 11.1 Logging
+Winston logger is configured to log:
+- HTTP requests
+- API errors
+- Database operations
+- Authentication events
+
+### 11.2 Monitoring
+- Integrated with Sentry for error tracking
+- Performance monitoring with New Relic
+- Health check endpoint for uptime monitoring
+
+## 12. References
+- Express.js Documentation: https://expressjs.com
+- MongoDB Documentation: https://docs.mongodb.com
+- Mongoose Documentation: https://mongoosejs.com/docs
+- JWT Authentication: https://jwt.io
+- Node.js Best Practices: https://github.com/goldbergyoni/nodebestpractices 

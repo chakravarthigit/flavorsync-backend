@@ -32,6 +32,14 @@ const UserSchema = new Schema({
   profileImage: {
     type: String,
     default: null
+  },
+  resetPasswordToken: {
+    type: String,
+    default: null
+  },
+  resetPasswordExpires: {
+    type: Date,
+    default: null
   }
 }, { 
   timestamps: true, // Keep the timestamps created by MongoDB
