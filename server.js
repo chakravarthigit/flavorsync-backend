@@ -66,20 +66,42 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Add error handler middleware
+// Import routes
+const routes = require('./routes/index');
+const authRoutes = require("./routes/authRoutes");
+const restaurantRoutes = require("./routes/restaurantRoutes");
+const userRoutes = require('./routes/userRoutes');
+
+let foodRoutes, reviewRoutes, chatbotRoutes;
+
+try {
+    foodRoutes = require("./routes/foodRoutes");
+    reviewRoutes = require("./routes/reviewRoutes");
+    chatbotRoutes = require("./routes/chatbotRoutes");
+} catch (error) {
+    console.warn("⚠️ Some route files not found. If needed, create them.");
+}
+
+// Use routes with /api prefix
+app.use('/api', routes);
+
+// Routes
+app.use("/api/auth", authRoutes);
+app.use("/api/restaurants", restaurantRoutes);
+app.use("/api/users", userRoutes); // This will handle /api/users/upload-image
+if (foodRoutes && typeof foodRoutes === "function") app.use("/api/food", foodRoutes);
+if (reviewRoutes && typeof reviewRoutes === "function") app.use("/api/reviews", reviewRoutes);
+if (chatbotRoutes && typeof chatbotRoutes === "function") app.use("/api/chatbot", chatbotRoutes);
+
+// Add error handler middleware - PLACED AFTER ROUTES to catch errors
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
-  res.status(500).json({ 
+  // Send a proper JSON response
+  return res.status(500).json({ 
     message: 'Internal server error', 
     error: err.message 
   });
 });
-
-// Import routes
-const routes = require('./routes/index');
-
-// Use routes with /api prefix
-app.use('/api', routes);
 
 // Add a root endpoint for easy testing
 app.get('/', (req, res) => {
@@ -104,29 +126,6 @@ if (!fs.existsSync(uploadDir)) {
 // Place this AFTER all middleware but BEFORE routes
 app.use('/uploads', express.static(uploadDir));
 console.log('Serving static files from:', uploadDir);
-
-// Import Routes
-const authRoutes = require("./routes/authRoutes");
-const restaurantRoutes = require("./routes/restaurantRoutes");
-const userRoutes = require('./routes/userRoutes');
-
-let foodRoutes, reviewRoutes, chatbotRoutes;
-
-try {
-    foodRoutes = require("./routes/foodRoutes");
-    reviewRoutes = require("./routes/reviewRoutes");
-    chatbotRoutes = require("./routes/chatbotRoutes");
-} catch (error) {
-    console.warn("⚠️ Some route files not found. If needed, create them.");
-}
-
-// Routes
-app.use("/api/auth", authRoutes);
-app.use("/api/restaurants", restaurantRoutes);
-app.use("/api/users", userRoutes); // This will handle /api/users/upload-image
-if (foodRoutes && typeof foodRoutes === "function") app.use("/api/food", foodRoutes);
-if (reviewRoutes && typeof reviewRoutes === "function") app.use("/api/reviews", reviewRoutes);
-if (chatbotRoutes && typeof chatbotRoutes === "function") app.use("/api/chatbot", chatbotRoutes);
 
 // Add a simple endpoint to check if file serving works
 app.get('/check-uploads', (req, res) => {
